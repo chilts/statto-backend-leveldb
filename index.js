@@ -15,6 +15,8 @@ var async = require('async')
 // --------------------------------------------------------------------------------------------------------------------
 
 var queue = async.queue()
+var FIELD_SEP = '~'
+var FIELD_END = '\xff'
 
 function StattoBackendLevelDB(db) {
   this.db = db
@@ -42,7 +44,10 @@ StattoBackendLevelDB.prototype.process = function process(stats, done) {
   var hash = crypto.createHash('sha1').update(str).digest('hex')
 
   // firstly, see if this file has already been started (ie. check the hash)
-  self.db.get('file!' + stats.ts + '!' + hash + '!beg' , function(err, val) {
+  var fileKeyBeg = makeFileKey(stats.ts, hash, 'beg')
+  var fileKeyDat = makeFileKey(stats.ts, hash, 'dat')
+  var fileKeyEnd = makeFileKey(stats.ts, hash, 'end')
+  self.db.get(fileKeyBeg, function(err, val) {
     if (err) {
       if ( err.type !== 'NotFoundError' ) {
         return done(err)
@@ -58,8 +63,8 @@ StattoBackendLevelDB.prototype.process = function process(stats, done) {
     console.log('Processing Stats ...')
 
     var ops = [
-      { type : 'put', key : 'file!' + stats.ts + '!' + hash + '!beg', value : (new Date()).toISOString() },
-      { type : 'put', key : 'file!' + stats.ts + '!' + hash + '!dat', value : JSON.stringify(stats) },
+      { type : 'put', key : fileKeyBeg, value : (new Date()).toISOString() },
+      { type : 'put', key : fileKeyDat, value : JSON.stringify(stats) },
     ]
     self.db.batch(ops, function(err) {
       if (err) return done(err)
@@ -75,8 +80,7 @@ StattoBackendLevelDB.prototype.process = function process(stats, done) {
           console.log('Finished Processing Stats')
 
           // let's record that this has finished
-          var endKey = 'file!' + stats.ts + '!' + hash + '!end'
-          self.db.put(endKey, (new Date()).toISOString(), function(err) {
+          self.db.put(fileKeyEnd, (new Date()).toISOString(), function(err) {
             if (err) return done(err)
             done()
           })
@@ -95,7 +99,7 @@ StattoBackendLevelDB.prototype.processCounters = function processCounters(ts, co
   async.each(
     keys,
     function(name, done) {
-      var key = 'c!' + name + '!' + ts
+      var key = makeCounterKey(name, ts)
       self.db.get(key, function(err, val) {
         if (err) {
           if (err.type == 'NotFoundError') {
@@ -121,6 +125,17 @@ StattoBackendLevelDB.prototype.processTimers = function processTimers(ts, timers
 
 StattoBackendLevelDB.prototype.dump = function dump() {
   var self = this
+}
+
+// --------------------------------------------------------------------------------------------------------------------
+// utility functions
+
+function makeFileKey(ts, hash, type) {
+  return 'f' + FIELD_SEP + ts + FIELD_SEP + hash + FIELD_SEP + type
+}
+
+function makeCounterKey(name, ts) {
+  return 'c' + FIELD_SEP + name + FIELD_SEP + ts
 }
 
 // --------------------------------------------------------------------------------------------------------------------
