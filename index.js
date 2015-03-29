@@ -116,15 +116,20 @@ StattoBackendLevelDB.prototype.processCounters = function processCounters(ts, co
 }
 
 StattoBackendLevelDB.prototype.processTimers = function processTimers(ts, timers, done) {
+  var self = this
+
   console.log('Processing timers ...')
   console.log(timers)
 
   var keys = Object.keys(timers)
-
-  process.nextTick(function() {
-    console.log('Done timers')
-    done()
-  })
+  async.each(
+    keys,
+    function(name, done) {
+      var key = makeTimerKey(name, ts)
+      self.db.put(key, timers[name], done)
+    },
+    done
+  )
 }
 
 StattoBackendLevelDB.prototype.processGauges = function processGauges(ts, gauges, done) {
@@ -160,6 +165,10 @@ function makeCounterKey(name, ts) {
 
 function makeGaugeKey(name, ts) {
   return 'g' + FIELD_SEP + name + FIELD_SEP + ts
+}
+
+function makeTimerKey(name, ts) {
+  return 't' + FIELD_SEP + name + FIELD_SEP + ts
 }
 
 // --------------------------------------------------------------------------------------------------------------------

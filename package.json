@@ -29,6 +29,7 @@
     "levelup": "^0.19.0"
   },
   "devDependencies": {
-    "statto": "^0.2.0"
+    "statto": "^0.2.0",
+    "tape": "^3.5.0"
   }
 }
