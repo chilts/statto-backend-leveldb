@@ -75,6 +75,7 @@ StattoBackendLevelDB.prototype.process = function process(stats, done) {
         [
           self.processCounters.bind(self, stats.ts, stats.counters),
           self.processTimers.bind(self, stats.ts, stats.timers),
+          self.processGauges.bind(self, stats.ts, stats.gauges),
         ],
         function(err) {
           console.log('Finished Processing Stats')
@@ -117,14 +118,33 @@ StattoBackendLevelDB.prototype.processCounters = function processCounters(ts, co
 StattoBackendLevelDB.prototype.processTimers = function processTimers(ts, timers, done) {
   console.log('Processing timers ...')
   console.log(timers)
+
+  var keys = Object.keys(timers)
+
   process.nextTick(function() {
     console.log('Done timers')
     done()
   })
 }
 
-StattoBackendLevelDB.prototype.dump = function dump() {
+StattoBackendLevelDB.prototype.processGauges = function processGauges(ts, gauges, done) {
   var self = this
+
+  console.log('Processing gauges ...')
+
+  // If we have processed a file from a different machine already, then we don't care if a gauge gets overwritten with
+  // this info or not. ie. we don't care which one is processed last in this period, since it really shouldn't affect
+  // things. This is true of any collector sending a gauge to a daemon anyway, the last measurement wins.
+
+  var keys = Object.keys(gauges)
+  async.each(
+    keys,
+    function(name, done) {
+      var key = makeGaugeKey(name, ts)
+      self.db.put(key, gauges[name], done)
+    },
+    done
+  )
 }
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -136,6 +156,10 @@ function makeFileKey(ts, hash, type) {
 
 function makeCounterKey(name, ts) {
   return 'c' + FIELD_SEP + name + FIELD_SEP + ts
+}
+
+function makeGaugeKey(name, ts) {
+  return 'g' + FIELD_SEP + name + FIELD_SEP + ts
 }
 
 // --------------------------------------------------------------------------------------------------------------------
