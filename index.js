@@ -17,19 +17,27 @@ var stattoProcess = require('statto-process')
 // --------------------------------------------------------------------------------------------------------------------
 
 var queue = async.queue()
+
 var FIELD_SEP = '!'
 var FIELD_END = '~'
 
-function StattoBackendLevelDB(db) {
+function StattoBackendLevelDB(db, opts) {
+  // default the opts to nothing
+  this.opts = opts || {}
+
+  // store the db and set up the queue
   this.db = db
   this.queue = async.queue(this.store.bind(this), 1)
+
+  // set some default options
+  this.opts.denormalise = this.opts.denormalise || false
 }
 
 StattoBackendLevelDB.prototype.stats = function stats(stats) {
   var self = this
 
-  console.log('=== %s ===', stats.ts)
-  console.log(JSON.stringify(stats, null, '  '))
+  // console.log('=== %s ===', stats.ts)
+  // console.log(JSON.stringify(stats, null, '  '))
 
   // Let's use async to store these things up, just in case it takes longer to process than
   // before the next one comes in ... in which case, you're in trouble!!!
@@ -39,7 +47,7 @@ StattoBackendLevelDB.prototype.stats = function stats(stats) {
 StattoBackendLevelDB.prototype.store = function store(stats, done) {
   var self = this
 
-  console.log('Processing:', JSON.stringify(stats, null, '  '))
+  // console.log('Processing:', JSON.stringify(stats, null, '  '))
 
   // figure out the SHA1 of these stats (should be unique due to 'ts' and 'info.pid' and 'info.host'
   var str = JSON.stringify(stats)
@@ -48,6 +56,7 @@ StattoBackendLevelDB.prototype.store = function store(stats, done) {
   // Store this file (check if something already there, but not need for locking since if we
   // overwrite it, it'll have exactly the same content anyway).
   var fileKey = makeFileKey(stats.ts, hash)
+  // console.log('Storing under fileKey=%s', fileKey)
   self.db.get(fileKey, function(err, val) {
     if (err) {
       if ( err.type !== 'NotFoundError' ) {
@@ -56,23 +65,71 @@ StattoBackendLevelDB.prototype.store = function store(stats, done) {
     }
     self.db.put(fileKey, stats, function(err) {
       if (err) return done(err)
-      done()
+
+      // now process the new stats
+      self.processFilesIntoStats(stats.ts, function(err, stats) {
+        if ( err ) {
+          // console.log('error processing stats:', err)
+          return done(err)
+        }
+        // console.log('Stats processed correctly')
+        done()
+      })
     })
   })
 }
 
-StattoBackendLevelDB.prototype.get = function get(date, callback) {
+StattoBackendLevelDB.prototype.getStats = function get(date, callback) {
   var self = this
 
-  var ts = date.toISOString()
+  var ts
+  if ( typeof date === 'string' ) {
+    ts = date
+    date = new Date(date)
+  }
+  else if ( date instanceof Date ) {
+    ts = date.toISOString()
+  }
+  else {
+    return process.nextTick(function() {
+      callback(new Error('Unknown date type : ' + typeof date))
+    })
+  }
 
-  console.log('Getting all of the stats for ' + ts)
+  // console.log('Getting all of the stats for ' + ts)
 
   // start streaming all the files for this timestamp
-  var begin = 'f' + FIELD_SEP + ts + FIELD_SEP
-  var end   = 'f' + FIELD_SEP + ts + FIELD_SEP + FIELD_END
-  console.log('begin=%s', begin)
-  console.log('end=%s', end)
+  var key = 's' + FIELD_SEP + ts
+  // console.log('Getting all of the stats for ' + key)
+
+  self.db.get(key, function(err, value) {
+    if (err) return callback(err)
+    callback(null, value)
+  })
+}
+
+StattoBackendLevelDB.prototype.getFilesAndMerge = function get(date, callback) {
+  var self = this
+
+  var ts
+  if ( typeof date === 'string' ) {
+    ts = date
+    date = new Date(date)
+  }
+  else if ( date instanceof Date ) {
+    ts = date.toISOString()
+  }
+  else {
+    return process.nextTick(function() {
+      callback(new Error('Unknown date type : ' + typeof date))
+    })
+  }
+
+  // console.log('Getting all of the files for ' + ts)
+
+  // start streaming all the files for this timestamp
+  var begin = makeFileKey(ts)
+  var end   = makeFileKey(ts) + FIELD_END
 
   var stats
 
@@ -81,8 +138,8 @@ StattoBackendLevelDB.prototype.get = function get(date, callback) {
     .createReadStream({ gt : begin, lt : end })
     .on('data', function (data) {
       count++
-      console.log('Got some data, key=' + data.key)
-      console.log('             count=' + count)
+      // console.log('Got some data, key=' + data.key)
+      // console.log('             count=' + count)
       // for the first set of data
       if ( count === 1 ) {
         // we don't need to do anything (just remember it)
@@ -94,14 +151,14 @@ StattoBackendLevelDB.prototype.get = function get(date, callback) {
       }
     })
     .on('error', function (err) {
-      console.log('Oh my!', err)
+      // console.log('Oh my!', err)
       callback(err)
     })
     .on('close', function () {
-      console.log('Stream Closed')
+      // console.log('Stream Closed')
     })
     .on('end', function () {
-      console.log('Stream Ended')
+      // console.log('Stream Ended')
       if ( !stats ) {
         return callback() // no problem, but no stats either
       }
@@ -110,29 +167,161 @@ StattoBackendLevelDB.prototype.get = function get(date, callback) {
   ;
 }
 
-StattoBackendLevelDB.prototype.process = function process(date, callback) {
+StattoBackendLevelDB.prototype.getCounterRange = function getCounterRange(name, from, to, interval, callback) {
   var self = this
 
-  var ts = date.toISOString()
-  console.log('Processing for ts=' + ts)
+  console.log('here', from, to)
 
-  self.get(date, function(err, stats) {
+  // IGNORE INTERVAL FOR NOW, JUST RETURN THE TIMESTAMPS AS WE HAVE THEM CURRENTLY STORED
+
+  if ( self.opts.denormalise ) {
+    // grab each denormalised counter
+    throw new Error('Not yet implemented')
+  }
+  else {
+    // just grab each complete set of stats and extract what we need
+    var periods = []
+
+    // start streaming all the stats for this timestamp
+    var start = makeStatKey(from.toISOString())
+    var end   = makeStatKey(to.toISOString())
+
+    self.db
+      .createReadStream({ gte : start, lt : end })
+      .on('data', function (data) {
+        console.log('data:', data)
+        if ( data.value.counters[name] ) {
+          periods.push({
+            ts : data.value.ts,
+            v  : data.value.counters[name],
+          })
+        }
+        // else, don't add this to the array
+      })
+      .on('error', function (err) {
+        callback(err)
+      })
+      .on('end', function () {
+        callback(null, periods)
+      })
+  }
+}
+
+StattoBackendLevelDB.prototype.range = function(range) {
+  var self = this
+  return 
+}
+
+StattoBackendLevelDB.prototype.getTimerRange = function getTimerRange(name, from, to, interval, callback) {
+  var self = this
+
+  // IGNORE INTERVAL FOR NOW, JUST RETURN THE TIMESTAMPS AS WE HAVE THEM CURRENTLY STORED
+
+  if ( self.opts.denormalise ) {
+    // grab each denormalised counter
+    throw new Error('Not yet implemented')
+  }
+  else {
+    // just grab each complete set of stats and extract what we need
+    var periods = []
+
+    // start streaming all the stats for this timestamp
+    var start = makeStatKey(from.toISOString())
+    var end   = makeStatKey(to.toISOString())
+
+    self.db
+      .createReadStream({ gte : start, lt : end })
+      .on('data', function (data) {
+        if ( data.value.timers[name] ) {
+          periods.push({
+            ts : data.value.ts,
+            v  : data.value.timers[name],
+          })
+        }
+        // else, don't add this to the array
+      })
+      .on('error', function (err) {
+        callback(err)
+      })
+      .on('end', function () {
+        callback(null, periods)
+      })
+  }
+}
+
+StattoBackendLevelDB.prototype.getGaugeRange = function getGaugeRange(name, from, to, interval, callback) {
+  var self = this
+
+  // IGNORE INTERVAL FOR NOW, JUST RETURN THE TIMESTAMPS AS WE HAVE THEM CURRENTLY STORED
+
+  if ( self.opts.denormalise ) {
+    // grab each denormalised counter
+    throw new Error('Not yet implemented')
+  }
+  else {
+    // just grab each complete set of stats and extract what we need
+    var periods = []
+
+    // start streaming all the stats for this timestamp
+    var start = makeStatKey(from.toISOString())
+    var end   = makeStatKey(to.toISOString())
+
+    self.db
+      .createReadStream({ gte : start, lt : end })
+      .on('data', function (data) {
+        if ( data.value.gauges[name] ) {
+          periods.push({
+            ts : data.value.ts,
+            v  : data.value.gauges[name],
+          })
+        }
+        // else, don't add this to the array
+      })
+      .on('error', function (err) {
+        callback(err)
+      })
+      .on('end', function () {
+        callback(null, periods)
+      })
+  }
+}
+
+StattoBackendLevelDB.prototype.processFilesIntoStats = function processFilesIntoStats(date, callback) {
+  var self = this
+
+  var ts
+  if ( typeof date === 'string' ) {
+    ts = date
+    date = new Date(date)
+  }
+  else if ( date instanceof Date ) {
+    ts = date.toISOString()
+  }
+  else {
+    return process.nextTick(function() {
+      callback(new Error('Unknown date type : ' + typeof date))
+    })
+  }
+
+  // console.log('=== Processing for ts=%s ===', ts)
+
+  self.getFilesAndMerge(date, function(err, stats) {
     if (err) return callback(err)
 
     // got the stats
-    console.log('merged stats:', stats)
+    // console.log('merged stats:', stats)
 
     // if there are no stats, don't do anything
     if ( !stats ) {
-      console.log('No stats for ' + ts)
-      return
+      // console.log('No stats for ' + ts)
+      return callback()
     }
 
     // process the stats
     stats = stattoProcess(stats)
 
     // let's store these processed stats
-    var key = 's' + FIELD_SEP + ts
+    var key = makeStatKey(ts)
     self.db.put(key, stats, function(err) {
       if (err) return callback(err)
 
@@ -142,105 +331,20 @@ StattoBackendLevelDB.prototype.process = function process(date, callback) {
   })
 }
 
-StattoBackendLevelDB.prototype.denormalise = function denormalise(stats, callback) {
-  // process the counters first
-  async.parallel(
-    [
-      self.processCounters.bind(self, stats.ts, stats.counters),
-      self.processTimers.bind(self, stats.ts, stats.timers),
-      self.processGauges.bind(self, stats.ts, stats.gauges),
-    ],
-    function(err) {
-      console.log('Finished Processing Stats')
-
-      // let's record that this has finished
-      self.db.put(fileKeyEnd, (new Date()).toISOString(), function(err) {
-        if (err) return done(err)
-        done()
-      })
-    }
-  )
-}
-
-StattoBackendLevelDB.prototype.processCounters = function processCounters(ts, counters, done) {
-  var self = this
-
-  console.log('Processing counters ...')
-
-  var keys = Object.keys(counters)
-  async.each(
-    keys,
-    function(name, done) {
-      var key = makeCounterKey(name, ts)
-      self.db.get(key, function(err, val) {
-        if (err) {
-          if (err.type == 'NotFoundError') {
-            return self.db.put(key, counters[name], done)
-          }
-          return done(err)
-        }
-        return self.db.put(key, val + counters[name], done)
-      })
-    },
-    done
-  )
-}
-
-StattoBackendLevelDB.prototype.processTimers = function processTimers(ts, timers, done) {
-  var self = this
-
-  console.log('Processing timers ...')
-  console.log(timers)
-
-  var keys = Object.keys(timers)
-  async.each(
-    keys,
-    function(name, done) {
-      var key = makeTimerKey(name, ts)
-      self.db.put(key, timers[name], done)
-    },
-    done
-  )
-}
-
-StattoBackendLevelDB.prototype.processGauges = function processGauges(ts, gauges, done) {
-  var self = this
-
-  console.log('Processing gauges ...')
-  console.log(gauges)
-
-  // If we have processed a file from a different machine already, then we don't care if a gauge gets overwritten with
-  // this info or not. ie. we don't care which one is processed last in this period, since it really shouldn't affect
-  // things. This is true of any collector sending a gauge to a daemon anyway, the last measurement wins.
-
-  var keys = Object.keys(gauges)
-  async.each(
-    keys,
-    function(name, done) {
-      var key = makeGaugeKey(name, ts)
-      self.db.put(key, gauges[name], done)
-    },
-    done
-  )
-}
 
 // --------------------------------------------------------------------------------------------------------------------
 // utility functions
 
 function makeFileKey(ts, hash) {
-  return 'f' + FIELD_SEP + ts + FIELD_SEP + hash
+  var key = 'f' + FIELD_SEP + ts
+  if ( hash ) {
+    key += FIELD_SEP + hash
+  }
+  return key
 }
 
-function makeCounterKey(name, ts) {
-  return 'c' + FIELD_SEP + name + FIELD_SEP + ts
-}
-
-function makeGaugeKey(name, ts) {
-  return 'g' + FIELD_SEP + name + FIELD_SEP + ts
-}
-
-function makeTimerKey(name, ts) {
-  return 't' + FIELD_SEP + name + FIELD_SEP + ts
+function makeStatKey(ts) {
+  return 'm' + FIELD_SEP + ts
 }
 
 // --------------------------------------------------------------------------------------------------------------------

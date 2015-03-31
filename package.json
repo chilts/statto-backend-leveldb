@@ -1,28 +1,11 @@
 {
   "name": "statto-backend-leveldb",
-  "version": "0.1.0",
   "description": "A backend for storing statto stats.",
+  "version": "0.1.0",
   "main": "index.js",
   "scripts": {
     "test": "npm test"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/tynio/statto-backend-leveldb"
-  },
-  "keywords": [
-    "statto",
-    "statsd",
-    "stats",
-    "statto-backend",
-    "leveldb"
-  ],
-  "author": "Andrew Chilton",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/tynio/statto-backend-leveldb/issues"
-  },
-  "homepage": "https://github.com/tynio/statto-backend-leveldb",
   "dependencies": {
     "async": "^0.9.0",
     "date-slice": "^0.1.0",
@@ -34,5 +17,26 @@
     "statto-merge": "^0.1.0",
     "statto-process": "^0.1.0",
     "tape": "^3.5.0"
-  }
+  },
+  "homepage": "https://github.com/tynio/statto-backend-leveldb",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tynio/statto-backend-leveldb"
+  },
+  "bugs": {
+    "url": "https://github.com/tynio/statto-backend-leveldb/issues"
+  },
+  "author": {
+    "name": "Andrew Chilton",
+    "email": "andychilton@gmail.com",
+    "url": "http://chilts.org/"
+  },
+  "license": "MIT",
+  "keywords": [
+    "statto",
+    "statsd",
+    "stats",
+    "statto-backend",
+    "leveldb"
+  ]
 }
