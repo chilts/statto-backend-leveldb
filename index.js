@@ -7,19 +7,22 @@
 // --------------------------------------------------------------------------------------------------------------------
 
 // core
-var crypto = require('crypto')
+var util = require('util')
 
 // npm
-var async = require('async')
 var stattoMerge = require('statto-merge')
 var stattoProcess = require('statto-process')
+var stattoBackend = require('statto-backend')
 
 // --------------------------------------------------------------------------------------------------------------------
+// module level
 
-var queue = async.queue()
-
+function noop(){}
 var FIELD_SEP = '!'
 var FIELD_END = '~'
+
+// --------------------------------------------------------------------------------------------------------------------
+// constructor
 
 function StattoBackendLevelDB(db, opts) {
   // default the opts to nothing
@@ -27,88 +30,122 @@ function StattoBackendLevelDB(db, opts) {
 
   // store the db and set up the queue
   this.db = db
-  this.queue = async.queue(this.store.bind(this), 1)
 
   // set some default options
   this.opts.denormalise = this.opts.denormalise || false
 }
+util.inherits(StattoBackendLevelDB, stattoBackend.StattoBackendAbstract)
 
-StattoBackendLevelDB.prototype.stats = function stats(stats) {
+// --------------------------------------------------------------------------------------------------------------------
+// methods
+
+StattoBackendLevelDB.prototype.addRaw = function addRaw(raw, callback) {
   var self = this
+  callback = callback || noop
 
-  // console.log('=== %s ===', stats.ts)
-  // console.log(JSON.stringify(stats, null, '  '))
+  // store these stats straight into LevelDB
+  var hash = self._getHash(raw)
+  var ts = raw.ts
 
-  // Let's use async to store these things up, just in case it takes longer to process than
-  // before the next one comes in ... in which case, you're in trouble!!!
-  this.queue.push(stats)
-}
-
-StattoBackendLevelDB.prototype.store = function store(stats, done) {
-  var self = this
-
-  // console.log('Processing:', JSON.stringify(stats, null, '  '))
-
-  // figure out the SHA1 of these stats (should be unique due to 'ts' and 'info.pid' and 'info.host'
-  var str = JSON.stringify(stats)
-  var hash = crypto.createHash('sha1').update(str).digest('hex')
-
-  // Store this file (check if something already there, but not need for locking since if we
+  // Store these raw stats (check if something already there, but no need for locking since if we
   // overwrite it, it'll have exactly the same content anyway).
-  var fileKey = makeFileKey(stats.ts, hash)
-  // console.log('Storing under fileKey=%s', fileKey)
-  self.db.get(fileKey, function(err, val) {
+  var rawKey = makeRawKey(raw.ts, hash)
+
+  self.db.get(rawKey, function(err, val) {
     if (err) {
       if ( err.type !== 'NotFoundError' ) {
-        return done(err)
+        callback(err)
+        return self.emit('error', err)
+      }
+      // This was a 'NotFoundError', so just carry on
+    }
+    self.db.put(rawKey, raw, function(err) {
+      if (err) return self.emit('error', err)
+      self.emit('stored')
+      callback()
+    })
+  })
+}
+
+StattoBackendLevelDB.prototype.getRaws = function getStats(date, callback) {
+  var self = this
+
+  date = self._datify(date)
+  if ( !date ) {
+    return process.nextTick(function() {
+      callback(new Error('Unknown date type : ' + typeof date))
+    })
+  }
+  var ts = date.toISOString()
+
+  var raws = []
+
+  var begin = makeRawKey(ts)
+  var end   = makeRawKey(ts) + FIELD_END
+  self.db
+    .createReadStream({ gt : begin, lt : end })
+    .on('data', function (data) {
+      console.log(data)
+      console.log(data.value)
+      raws.push(data.value)
+    })
+    .on('error', function (err) {
+      callback(err)
+    })
+    .on('close', function () {
+      // nothing
+    })
+    .on('end', function () {
+      callback(null, raws)
+    })
+  ;
+}
+
+StattoBackendLevelDB.prototype.setStats = function setStats(stats, callback) {
+  var self = this
+
+  // Store this file (check if something already there, but no need for locking since if we
+  // overwrite it, it'll have exactly the same content anyway).
+  var statsKey = makeStatsKey(stats.ts)
+
+  self.db.get(statsKey, function(err, val) {
+    if (err) {
+      if ( err.type !== 'NotFoundError' ) {
+        self.error(err)
+        return callback(err)
       }
     }
-    self.db.put(fileKey, stats, function(err) {
-      if (err) return done(err)
-
-      // now process the new stats
-      self.processFilesIntoStats(stats.ts, function(err, stats) {
-        if ( err ) {
-          // console.log('error processing stats:', err)
-          return done(err)
-        }
-        // console.log('Stats processed correctly')
-        done()
-      })
-    })
+    self.db.put(statsKey, stats, callback)
   })
 }
 
 StattoBackendLevelDB.prototype.getStats = function get(date, callback) {
   var self = this
+  callback = callback || noop
 
-  var ts
-  if ( typeof date === 'string' ) {
-    ts = date
-    date = new Date(date)
-  }
-  else if ( date instanceof Date ) {
-    ts = date.toISOString()
-  }
-  else {
+  date = self._datify(date)
+  if ( !date ) {
     return process.nextTick(function() {
       callback(new Error('Unknown date type : ' + typeof date))
     })
   }
+  var ts = date.toISOString()
 
-  // console.log('Getting all of the stats for ' + ts)
+  // make the stats key
+  var statsKey = makeStatsKey(ts)
 
-  // start streaming all the files for this timestamp
-  var key = 's' + FIELD_SEP + ts
-  // console.log('Getting all of the stats for ' + key)
-
-  self.db.get(key, function(err, value) {
-    if (err) return callback(err)
-    callback(null, value)
+  self.db.get(statsKey, function(err, val) {
+    if (err) {
+      if ( err.type !== 'NotFoundError' ) {
+        return callback()
+      }
+      return callback(err)
+    }
+    callback(null, val)
   })
 }
 
-StattoBackendLevelDB.prototype.getFilesAndMerge = function get(date, callback) {
+StattoBackendLevelDB.prototype.getFilesAndMerge = function getFilesAndMerge(date, callback) {
   var self = this
 
   var ts
@@ -128,8 +165,8 @@ StattoBackendLevelDB.prototype.getFilesAndMerge = function get(date, callback) {
   // console.log('Getting all of the files for ' + ts)
 
   // start streaming all the files for this timestamp
-  var begin = makeFileKey(ts)
-  var end   = makeFileKey(ts) + FIELD_END
+  var begin = makeRawKey(ts)
+  var end   = makeRawKey(ts) + FIELD_END
 
   var stats
 
@@ -170,8 +207,6 @@ StattoBackendLevelDB.prototype.getFilesAndMerge = function get(date, callback) {
 StattoBackendLevelDB.prototype.getCounterRange = function getCounterRange(name, from, to, interval, callback) {
   var self = this
 
-  console.log('here', from, to)
-
   // IGNORE INTERVAL FOR NOW, JUST RETURN THE TIMESTAMPS AS WE HAVE THEM CURRENTLY STORED
 
   if ( self.opts.denormalise ) {
@@ -183,8 +218,8 @@ StattoBackendLevelDB.prototype.getCounterRange = function getCounterRange(name, 
     var periods = []
 
     // start streaming all the stats for this timestamp
-    var start = makeStatKey(from.toISOString())
-    var end   = makeStatKey(to.toISOString())
+    var start = makeStatsKey(from.toISOString())
+    var end   = makeStatsKey(to.toISOString())
 
     self.db
       .createReadStream({ gte : start, lt : end })
@@ -226,8 +261,8 @@ StattoBackendLevelDB.prototype.getTimerRange = function getTimerRange(name, from
     var periods = []
 
     // start streaming all the stats for this timestamp
-    var start = makeStatKey(from.toISOString())
-    var end   = makeStatKey(to.toISOString())
+    var start = makeStatsKey(from.toISOString())
+    var end   = makeStatsKey(to.toISOString())
 
     self.db
       .createReadStream({ gte : start, lt : end })
@@ -263,8 +298,8 @@ StattoBackendLevelDB.prototype.getGaugeRange = function getGaugeRange(name, from
     var periods = []
 
     // start streaming all the stats for this timestamp
-    var start = makeStatKey(from.toISOString())
-    var end   = makeStatKey(to.toISOString())
+    var start = makeStatsKey(from.toISOString())
+    var end   = makeStatsKey(to.toISOString())
 
     self.db
       .createReadStream({ gte : start, lt : end })
@@ -321,7 +356,7 @@ StattoBackendLevelDB.prototype.processFilesIntoStats = function processFilesInto
     stats = stattoProcess(stats)
 
     // let's store these processed stats
-    var key = makeStatKey(ts)
+    var key = makeStatsKey(ts)
     self.db.put(key, stats, function(err) {
       if (err) return callback(err)
 
@@ -331,19 +366,18 @@ StattoBackendLevelDB.prototype.processFilesIntoStats = function processFilesInto
   })
 }
 
-
 // --------------------------------------------------------------------------------------------------------------------
 // utility functions
 
-function makeFileKey(ts, hash) {
-  var key = 'f' + FIELD_SEP + ts
+function makeRawKey(ts, hash) {
+  var key = 'r' + FIELD_SEP + ts
   if ( hash ) {
     key += FIELD_SEP + hash
   }
   return key
 }
 
-function makeStatKey(ts) {
+function makeStatsKey(ts) {
   return 'm' + FIELD_SEP + ts
 }
 
@@ -354,7 +388,7 @@ module.exports = function backend(db, opts) {
     throw new Error('Required: db in statto-backend-leveldb')
   }
 
-  return new StattoBackendLevelDB(db)
+  return new StattoBackendLevelDB(db, opts)
 }
 
 // --------------------------------------------------------------------------------------------------------------------

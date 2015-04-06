@@ -1,16 +1,17 @@
 {
   "name": "statto-backend-leveldb",
-  "description": "A backend for storing statto stats.",
+  "description": "A statto backend for LevelDB.",
   "version": "0.1.0",
   "main": "index.js",
   "scripts": {
-    "test": "npm test"
+    "test": "tape test/*.js"
   },
   "dependencies": {
     "async": "^0.9.0",
     "date-slice": "^0.1.0",
     "leveldown": "^0.10.4",
-    "levelup": "^0.19.0"
+    "levelup": "^0.19.0",
+    "statto-backend": "*"
   },
   "devDependencies": {
     "statto": "^0.2.0",
