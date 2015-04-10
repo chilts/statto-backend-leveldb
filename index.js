@@ -85,8 +85,6 @@ StattoBackendLevelDB.prototype.getRaws = function getStats(date, callback) {
   self.db
     .createReadStream({ gt : begin, lt : end })
     .on('data', function (data) {
-      console.log(data)
-      console.log(data.value)
       raws.push(data.value)
     })
     .on('error', function (err) {
@@ -144,6 +142,60 @@ StattoBackendLevelDB.prototype.getStats = function get(date, callback) {
     callback(null, val)
   })
 }
+
+StattoBackendLevelDB.prototype.createStatsReadStream = function createStatsReadStream(from, to, callback) {
+  // * from - greater than or equal to (always included)
+  // * to - less than (therefore never included)
+  var self = this
+
+  from = self._datify(from)
+  to   = self._datify(to)
+  // if ( !from ) {
+  //   return process.nextTick(function() {
+  //     callback(new Error("Unknown 'from' type : " + typeof from))
+  //   })
+  // }
+  // if ( !to ) {
+  //   return process.nextTick(function() {
+  //     callback(new Error("Unknown 'to' type : " + typeof to))
+  //   })
+  // }
+  var ts1 = from.toISOString()
+  var ts2 = to.toISOString()
+
+  // start streaming all the files for this timestamp
+  var begin = makeStatsKey(ts1)
+  var end   = makeStatsKey(ts2)
+
+  return self.db.createValueStream({ gte : begin, lt : end })
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 StattoBackendLevelDB.prototype.getFilesAndMerge = function getFilesAndMerge(date, callback) {
   var self = this
