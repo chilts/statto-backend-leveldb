@@ -256,43 +256,6 @@ StattoBackendLevelDB.prototype.getFilesAndMerge = function getFilesAndMerge(date
   ;
 }
 
-StattoBackendLevelDB.prototype.getCounterRange = function getCounterRange(name, from, to, interval, callback) {
-  var self = this
-
-  // IGNORE INTERVAL FOR NOW, JUST RETURN THE TIMESTAMPS AS WE HAVE THEM CURRENTLY STORED
-
-  if ( self.opts.denormalise ) {
-    // grab each denormalised counter
-    throw new Error('Not yet implemented')
-  }
-  else {
-    // just grab each complete set of stats and extract what we need
-    var periods = []
-
-    // start streaming all the stats for this timestamp
-    var start = makeStatsKey(from.toISOString())
-    var end   = makeStatsKey(to.toISOString())
-
-    self.db
-      .createReadStream({ gte : start, lt : end })
-      .on('data', function (data) {
-        console.log('data:', data)
-        if ( data.value.counters[name] ) {
-          periods.push({
-            ts : data.value.ts,
-            v  : data.value.counters[name],
-          })
-        }
-        // else, don't add this to the array
-      })
-      .on('error', function (err) {
-        callback(err)
-      })
-      .on('end', function () {
-        callback(null, periods)
-      })
-  }
-}
 
 StattoBackendLevelDB.prototype.range = function(range) {
   var self = this
