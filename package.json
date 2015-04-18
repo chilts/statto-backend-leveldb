@@ -11,12 +11,12 @@
     "date-slice": "^0.1.0",
     "leveldown": "^0.10.4",
     "levelup": "^0.19.0",
-    "statto-backend": "*"
+    "statto-backend": "^0.3.0",
+    "statto-merge": "^0.2.0",
+    "statto-process": "^0.2.0"
   },
   "devDependencies": {
     "statto": "^0.2.0",
-    "statto-merge": "^0.1.0",
-    "statto-process": "^0.1.0",
     "tape": "^3.5.0"
   },
   "homepage": "https://github.com/tynio/statto-backend-leveldb",
